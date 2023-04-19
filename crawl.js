@@ -1,46 +1,65 @@
 const { JSDOM } = require("jsdom");
 
-async function crawlPage(currentURL) {
+async function crawlPage(baseURL, currentURL, pages) {
+  const baseURLObj = new URL(baseURL);
+  const currentURLObj = new URL(currentURL);
+  if (baseURLObj.hostname !== currentURLObj.hostname) {
+    return pages;
+  }
+
+  const normailizedCurrentURL = normalizeURL(currentURL);
+  if (pages[normailizedCurrentURL] > 0) {
+    pages[normailizedCurrentURL]++;
+    return pages;
+  }
+
+  pages[normailizedCurrentURL] = 1;
+
   console.log(`actively crawling ${currentURL}`);
+  let htmlBody = "";
   try {
     const resp = await fetch(currentURL);
     if (resp.status > 399) {
       console.log(
         `error in fetch with status code ${resp.status} on page: ${currentURL}`
       );
-      return;
+      return pages;
     }
-    const contentType = resp.headers.get("Content-Type");
+    const contentType = resp.headers.get("content-type");
     if (!contentType.includes("text/html")) {
       console.log(
         `none html response, content type: ${contentType} on page: ${currentURL}`
       );
-      return;
+      return pages;
     }
-    console.log(await resp.text());
+
+    htmlBody = await resp.text();
   } catch (err) {
     console.log(`error in fetch: ${err.message}, on page ${currentURL}`);
   }
+  const nextURLs = getURLsFromHTML(htmlBody, baseURL);
+  for (const nextURL of nextURLs) {
+    pages = await crawlPage(baseURL, nextURL, pages);
+  }
+  return pages;
 }
 
 function getURLsFromHTML(htmlBody, baseURL) {
   const urls = [];
   const dom = new JSDOM(htmlBody);
-  const linkElements = dom.window.document.querySelectorAll("a");
-  for (const linkElement of linkElements) {
-    if (linkElement.href.slice(0, 1) === "/") {
+  const aElements = dom.window.document.querySelectorAll("a");
+  for (const aElement of aElements) {
+    if (aElement.href.slice(0, 1) === "/") {
       try {
-        const urlObj = new URL(`${baseURL}${linkElement.href}`);
-        urls.push(urlObj.href);
+        urls.push(new URL(aElement.href, baseURL).href);
       } catch (err) {
-        console.log(`error with relative URL ${err.message}`);
+        console.log(`${err.message}: ${aElement.href}`);
       }
     } else {
       try {
-        const urlObj = new URL(`${linkElement.href}`);
-        urls.push(urlObj.href);
+        urls.push(new URL(aElement.href).href);
       } catch (err) {
-        console.log(`error with absolute URL ${err.message}`);
+        console.log(`${err.message}: ${aElement.href}`);
       }
     }
   }
